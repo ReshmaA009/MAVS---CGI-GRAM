@@ -7,7 +7,7 @@ import psycopg2
 from psycopg2 import sql
 from uuid import uuid4
 from psycopg2 import Binary
-conn = psycopg2.connect("postgresql://postgres:!Re2300135@db.eyjhuatnyozqlxdauqar.supabase.co:5432/postgres")
+conn = psycopg2.connect("postgresql://postgres:%21Re2300135@db.eyjhuatnyozqlxdauqar.supabase.co:5432/postgres")
 
 # --- SESSION STATE INITIALIZATION ---
 SESSION_DEFAULTS = {
