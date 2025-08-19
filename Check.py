@@ -7,6 +7,7 @@ import psycopg2
 from psycopg2 import sql
 from uuid import uuid4
 from psycopg2 import Binary
+conn = psycopg2.connect("postgresql://postgres:!Re2300135@db.eyjhuatnyozqlxdauqar.supabase.co:5432/postgres")
 
 # --- SESSION STATE INITIALIZATION ---
 SESSION_DEFAULTS = {
@@ -22,12 +23,13 @@ for key, default in SESSION_DEFAULTS.items():
 
 # PostgreSQL DB config
 DB_CONFIG = {
-    "host": "localhost",
+    "host": "db.eyjhuatnyozqlxdauqar.supabase.co",
     "port": 5432,
     "dbname": "postgres",
     "user": "postgres",
     "password": "!Re2300135"
 }
+
 
 def get_connection():
     return psycopg2.connect(**DB_CONFIG)
