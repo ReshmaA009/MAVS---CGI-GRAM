@@ -1,13 +1,14 @@
 import streamlit as st
 from datetime import datetime
 import bcrypt
-import psycopg2
-from psycopg2 import sql
+import supabase
+from supabase import sql
 from uuid import uuid4
-from psycopg2 import Binary
+from supabase import Binary
 import re
 import time
 import plotly.express as px
+import supabase
 
 # --- SESSION STATE INITIALIZATION ---
 SESSION_DEFAULTS = {
@@ -23,10 +24,16 @@ for key, default in SESSION_DEFAULTS.items():
 
 # ✅ Main DB config (for app work)
 
-DB_CONFIG = st.secrets["postgres"]
+from supabase import create_client, Client
+
+# Get your Supabase URL and Key from Streamlit secrets
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def get_connection():
-    return psycopg2.connect(**DB_CONFIG)
+    return supabase.connect(**DB_CONFIG)
 
 def log_db_connection_error(error):
     # Show error in UI
@@ -34,7 +41,7 @@ def log_db_connection_error(error):
     
 def check_db_connection():
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
+        conn = supabase.connect(**DB_CONFIG)
         conn.close()
         return True
     except Exception as e:
@@ -580,8 +587,8 @@ elif page == "Upload":
     video_uuid,
     title,
     0, 0, 0, 0,
-    psycopg2.Binary(video_data),
-    psycopg2.Binary(thumb_data) if thumb_data else None,
+    supabase.Binary(video_data),
+    supabase.Binary(thumb_data) if thumb_data else None,
     desc,
     st.session_state.username  # <-- save logged-in user as uploader
 ))
@@ -1179,4 +1186,3 @@ elif page == "Activity":
 
     except Exception as e:
         st.error(f"Error loading activity: {e}")
-
