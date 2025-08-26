@@ -25,14 +25,6 @@ for key, default in SESSION_DEFAULTS.items():
 
 DB_CONFIG = st.secrets["postgres"]
 
-conn = psycopg2.connect(
-    host=DB_CONFIG["host"],
-    port=DB_CONFIG["port"],
-    dbname=DB_CONFIG["dbname"],
-    user=DB_CONFIG["user"],
-    password=DB_CONFIG["password"],
-    sslmode=DB_CONFIG["sslmode"]
-)
 def get_connection():
     return psycopg2.connect(**DB_CONFIG)
 
@@ -1187,3 +1179,4 @@ elif page == "Activity":
 
     except Exception as e:
         st.error(f"Error loading activity: {e}")
+
