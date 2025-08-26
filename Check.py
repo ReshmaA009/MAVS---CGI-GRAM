@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import datetime
 import bcrypt
 import supabase
-from supabase import sql
+from supabase import create_client, Client
 from uuid import uuid4
 from supabase import Binary
 import re
@@ -1186,3 +1186,4 @@ elif page == "Activity":
 
     except Exception as e:
         st.error(f"Error loading activity: {e}")
+
