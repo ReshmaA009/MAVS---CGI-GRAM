@@ -12,18 +12,23 @@ import supabase
 
 from supabase import create_client
 
-url = "https://eyjhuatnyozqlxdauqar.supabase.co"
-key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5amh1YXRueW96cWx4ZGF1cWFyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1OTcxOTEsImV4cCI6MjA3MTE3MzE5MX0.WmmbawEZcM-j3BTkFx6mCIeQoRHKexxxIJrCTpk-GWw"
+# Supabase client setup
+url = "YOUR_SUPABASE_URL"
+key = "YOUR_SUPABASE_ANON_KEY"
 supabase = create_client(url, key)
 
-# Example: inserting a file as binary
-with open("example.mp4", "rb") as f:
-    file_bytes = f.read()
+# Upload file using Streamlit
+uploaded_file = st.file_uploader("Choose a video...", type=["mp4"])
+if uploaded_file is not None:
+    file_bytes = uploaded_file.read()
 
-data = supabase.table("videos").insert({
-    "name": "My Video",
-    "file_data": file_bytes  # bytes type works
-}).execute()
+    # Insert binary file into Supabase
+    data = supabase.table("videos").insert({
+        "file_name": uploaded_file.name,
+        "file_data": file_bytes
+    }).execute()
+
+    st.success(f"Uploaded {uploaded_file.name} successfully!")
 
 
 # --- SESSION STATE INITIALIZATION ---
@@ -1202,6 +1207,7 @@ elif page == "Activity":
 
     except Exception as e:
         st.error(f"Error loading activity: {e}")
+
 
 
 
