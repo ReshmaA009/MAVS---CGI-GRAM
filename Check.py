@@ -4,11 +4,27 @@ import bcrypt
 import supabase
 from supabase import create_client, Client
 from uuid import uuid4
-from supabase import Binary
+#from supabase import Binary
 import re
 import time
 import plotly.express as px
 import supabase
+
+from supabase import create_client
+
+url = "YOUR_SUPABASE_URL"
+key = "YOUR_SUPABASE_KEY"
+supabase = create_client(url, key)
+
+# Example: inserting a file as binary
+with open("example.mp4", "rb") as f:
+    file_bytes = f.read()
+
+data = supabase.table("videos").insert({
+    "name": "My Video",
+    "file_data": file_bytes  # bytes type works
+}).execute()
+
 
 # --- SESSION STATE INITIALIZATION ---
 SESSION_DEFAULTS = {
@@ -1186,4 +1202,5 @@ elif page == "Activity":
 
     except Exception as e:
         st.error(f"Error loading activity: {e}")
+
 
