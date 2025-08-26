@@ -13,8 +13,8 @@ import supabase
 from supabase import create_client
 
 # Supabase client setup
-url = "YOUR_SUPABASE_URL"
-key = "YOUR_SUPABASE_ANON_KEY"
+url = "https://eyjhuatnyozqlxdauqar.supabase.co"
+key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV5amh1YXRueW96cWx4ZGF1cWFyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU1OTcxOTEsImV4cCI6MjA3MTE3MzE5MX0.WmmbawEZcM-j3BTkFx6mCIeQoRHKexxxIJrCTpk-GWw"
 supabase = create_client(url, key)
 
 # Upload file using Streamlit
@@ -1207,6 +1207,7 @@ elif page == "Activity":
 
     except Exception as e:
         st.error(f"Error loading activity: {e}")
+
 
 
 
