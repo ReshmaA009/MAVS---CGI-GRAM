@@ -1,13 +1,13 @@
 import streamlit as st
 from datetime import datetime
 import bcrypt
-#import json
-#import os
 import psycopg2
 from psycopg2 import sql
 from uuid import uuid4
 from psycopg2 import Binary
-conn = psycopg2.connect("postgresql://postgres:%21Re2300135@db.eyjhuatnyozqlxdauqar.supabase.co:5432/postgres")
+import re
+import time
+import plotly.express as px
 
 # --- SESSION STATE INITIALIZATION ---
 SESSION_DEFAULTS = {
@@ -21,29 +21,33 @@ for key, default in SESSION_DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
-# PostgreSQL DB config
-DB_CONFIG = {
-    "host": "db.eyjhuatnyozqlxdauqar.supabase.co",
-    "port": 5432,
-    "dbname": "postgres",
-    "user": "postgres",
-    "password": "!Re2300135"
-}
-
+# ✅ Main DB config (for app work)
+DB_CONFIG = st.secrets["postgres"]
 
 def get_connection():
     return psycopg2.connect(**DB_CONFIG)
+
+def log_db_connection_error(error):
+    # Show error in UI
+    st.error(f"⚠️ Error: {error}")
+    
+def check_db_connection():
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"It seems like the server is currently unavailable.Please contact Server Administrator")   # only shows in UI now
+        return False
+
+# Startup check
+if not check_db_connection():
+    st.stop()
 
 def save_reaction_to_db(video_id, username, reaction_type):
     try:
         conn = get_connection()
         cur = conn.cursor()
-
-        # First remove existing reaction of this user for this video (if any)
-        #cur.execute("""
-        #    DELETE FROM public."MAVS_VIDEO_REACTIONS"
-         #   WHERE "VIDEO_ID" = %s AND "USER_NAME" = %s
-        #""", (video_id, username))
 
         # Insert new reaction
         cur.execute("""
@@ -78,7 +82,7 @@ def save_rating_to_db(video_id, username, rating_value):
         cur.close()
         conn.close()
     except Exception as e:
-        st.error(f"Error saving rating: {e}")
+        st.error(f"Failed to update avg rating: {e}")
 
 def update_video_avg_rating(video_id):
     try:
@@ -142,35 +146,71 @@ def show_auth():
     st.title("📺 Welcome to Mavs(CGI GRAM)")
     tabs = st.tabs(["🔐 Login", "📝 Register"])
 
+    # ================= LOGIN TAB =================
     with tabs[0]:
         username = st.text_input("Username", key="login_user")
         password = st.text_input("Password", type="password", key="login_pass")
-        if st.button("Login"):
-            users = load_users_from_db()
-            if username in users and check_password(password, users[username]):
-                st.session_state.logged_in = True
-                st.session_state.username = username
-                st.success(f"Welcome, {username}!")
-                st.rerun()
-            else:
-                st.error("Invalid username or password.")
 
+        if st.button("Login"):
+            errors = []
+
+            # --- Username validation ---
+            if " " in username:
+                errors.append("❌ Username should not contain spaces.")
+
+            # --- Password validation ---
+            password_pattern = r'^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$'
+            if password and not re.match(password_pattern, password):
+                errors.append("❌ Password must contain a letter, a number, and a special character.")
+
+            if errors:
+                for e in errors:
+                    st.error(e)
+            else:
+                users = load_users_from_db()
+                if username in users and check_password(password, users[username]):
+                    st.session_state.logged_in = True
+                    st.session_state.username = username
+                    st.success(f"Welcome, {username}!")
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+    # ================= REGISTER TAB =================
     with tabs[1]:
         new_user = st.text_input("Choose a username", key="reg_user")
         new_pass = st.text_input("Choose a password", type="password", key="reg_pass")
         confirm_pass = st.text_input("Confirm password", type="password", key="reg_conf")
+
         if st.button("Register"):
-            users = load_users_from_db()
-            if new_user in users:
-                st.warning("Username already exists.")
-            elif new_pass != confirm_pass:
-                st.warning("Passwords do not match.")
-            elif not new_user or not new_pass:
-                st.warning("Username and password cannot be empty.")
+            errors = []
+
+            # --- Username validation ---
+            if " " in new_user:
+                errors.append("❌ Username should not contain spaces.")
+
+            # --- Password validation ---
+            password_pattern = r'^(?=.*[A-Za-z])(?=.*\d)(?=.*[^A-Za-z0-9]).+$'
+            if new_pass and not re.match(password_pattern, new_pass):
+                errors.append("❌ Password must contain a letter, a number, and a special character.")
+
+            if new_pass != confirm_pass:
+                errors.append("❌ Passwords do not match.")
+
+            if not new_user or not new_pass:
+                errors.append("❌ Username and password cannot be empty.")
+
+            if errors:
+                for e in errors:
+                    st.error(e)
             else:
-                hashed = hash_password(new_pass)
-                save_user_to_db(new_user, hashed)
-                st.success("User registered! You can now log in.")
+                users = load_users_from_db()
+                if new_user in users:
+                    st.warning("Username already exists.")
+                else:
+                    hashed = hash_password(new_pass)
+                    save_user_to_db(new_user, hashed)
+                    st.success("User registered! You can now log in.")
 
 def update_video_stats(video_uuid, views, likes, dislikes, hearts, avg_rating=None):
     try:
@@ -226,13 +266,13 @@ def load_videos_from_db():
         cur = conn.cursor()
         cur.execute("""
             SELECT "VIDEO_ID", "VIDEO_NAME", "VIEWS", "LIKES", "DISLIKES", "HEARTS",
-                   "VIDEO_DATA", "THUMB_DATA", "VIDEO_DESC", "RATING"
+           "VIDEO_DATA", "THUMB_DATA", "VIDEO_DESC", "RATING", "Uploaded_By"
             FROM public."MAVS_VIDEOS"
         """)
         video_rows = cur.fetchall()
 
         video_dict = {}
-        for video_id, name, views, likes, dislikes, hearts, video_blob, thumb_blob, desc, rating in video_rows:
+        for video_id, name, views, likes, dislikes, hearts, video_blob, thumb_blob, desc, rating,uploaded_by  in video_rows:
             video_dict[video_id] = {
                 "uuid": video_id,
                 "title": name,
@@ -246,7 +286,7 @@ def load_videos_from_db():
                 "comments": [],
                 "ratings": {},  # keep for user-specific ratings if needed
                 "RATING": float(rating) if rating is not None else 0,  # use DB rating
-                "uploaded_by": "Unknown"
+                "uploaded_by": uploaded_by  # <-- set uploader # type: ignore
             }
 
         # Load reactions for all videos
@@ -303,7 +343,7 @@ with st.sidebar:
 if "page" not in st.session_state:
     st.session_state.page = "Home"
 
-pages = ["Home", "Upload", "Watch", "Analytics"]
+pages = ["Home", "Upload", "Watch", "Analytics","Activity"]
 selected_page = st.sidebar.radio("Go to", pages, index=pages.index(st.session_state.page), key="main_nav")
 
 if selected_page != st.session_state.page:
@@ -315,227 +355,84 @@ import streamlit as st
 
 st.markdown("""
 <style>
-/* ===== Sidebar (mild CGI style) ===== */
 [data-testid="stSidebar"] {
-   background-color: #C2182B !important; /* Softer burgundy */
-   ## background-color: #000000 !important;
-    color: #FFFFFF !important;
-    min-width: 200px;
-    padding-top: 20px;
-    box-shadow: 1px 0 4px rgba(0,0,0,0.08);
+   background: linear-gradient(180deg, #8B0000, #FF4500) !important;
+   color: #FFFFFF !important;
+   min-width: 200px;
+   padding-top: 20px;
+   box-shadow: 1px 0 4px rgba(0,0,0,0.08);
 }
-
-/* Sidebar text */
-[data-testid="stSidebar"] * {
-    color: #FFFFFF !important;
-    font-weight: 500;
-}
-
-/* MAVS text - force white, no gradient */
+[data-testid="stSidebar"] * { color: #FFD580 !important; font-weight: 500; }
 [data-testid="stSidebar"] h1.sidebar-title,
 [data-testid="stSidebar"] h1.sidebar-title * {
     background: none !important;
     -webkit-background-clip: unset !important;
     -webkit-text-fill-color: unset !important;
-    color: #FFFFFF !important;   /* Keep MAVS white */
-    font-size: 28px !important;
-    font-weight: bold !important;
-    margin: 20px 10px 20px 10px;
-    display: block !important;
-}
-
-/* Section headers */
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3 {
-    color: #F4F4F4 !important;
-    text-transform: uppercase;
-    font-size: 13px;
-    margin: 18px 10px 6px 10px;
-    font-weight: 600;
-}
-
-/* Sidebar links */
-[data-testid="stSidebar"] a {
-    display: block;
-    padding: 10px 15px;
-    margin: 2px 10px;
-    border-radius: 6px;
-    text-decoration: none !important;
     color: #FFFFFF !important;
+    font-size: 28px !important; font-weight: bold !important;
+    margin: 20px 10px 20px 10px; display: block !important;
+}
+[data-testid="stSidebar"] h2,[data-testid="stSidebar"] h3 {
+    color: #F4F4F4 !important; text-transform: uppercase; font-size: 13px;
+    margin: 18px 10px 6px 10px; font-weight: 600;
+}
+[data-testid="stSidebar"] a {
+    display: block; padding: 10px 15px; margin: 2px 10px; border-radius: 6px;
+    text-decoration: none !important; color: #FFFFFF !important;
     transition: background 0.3s, font-weight 0.3s;
 }
-
-/* Hover effect */
-[data-testid="stSidebar"] a:hover {
-    background-color: rgba(227,25,55,0.1);
-    font-weight: bold;
-}
-
-/* Active link */
-[data-testid="stSidebar"] a:focus,
-[data-testid="stSidebar"] a:active {
-    background-color: #FFFFFF !important;
-    color: #E31837 !important;
-    font-weight: bold;
+[data-testid="stSidebar"] a:hover { background-color: rgba(227,25,55,0.1); font-weight: bold; }
+[data-testid="stSidebar"] a:focus,[data-testid="stSidebar"] a:active {
+    background-color: #FFFFFF !important; color: #E31837 !important; font-weight: bold;
     border-left: 3px solid #E31837;
 }
-
-/* ===== Main page colors ===== */
-.stApp {
-    background-color: #F4F4F4;
-    color: #212121;
-    font-family: "Segoe UI", Arial, sans-serif;
-}
-
-/* ===== All headers default (Red-Blue Gradient) ===== */
-h1:not(.no-gradient),
-h2:not(.no-gradient),
-h3:not(.no-gradient),
-h4:not(.no-gradient),
-h5:not(.no-gradient),
-h6:not(.no-gradient) {
+.stApp { background: radial-gradient(circle at top left, #fff5f5, #ffffff 40%, #ffecec 80%) !important;
+    color: #212121; font-family: "Segoe UI", Arial, sans-serif; }
+[data-testid="stHeader"] { background: radial-gradient(circle at top left, #fff5f5, #ffffff 40%, #ffecec 80%) !important; }
+h1:not(.no-gradient),h2:not(.no-gradient),h3:not(.no-gradient),h4:not(.no-gradient),h5:not(.no-gradient),h6:not(.no-gradient) {
     background: linear-gradient(90deg, #E31837, #0a47a3) !important;
-    -webkit-background-clip: text !important;
-    -webkit-text-fill-color: transparent !important;
+    -webkit-background-clip: text !important; -webkit-text-fill-color: transparent !important;
     font-weight: bold !important;
 }
-
-/* ===== Buttons (updated colors) ===== */
-.stButton > button.primary {
-    background-color: #E31837 !important;
-    color: #FFFFFF !important;
-    border-radius: 5px;
-    padding: 0.6em 1.2em;
-    font-weight: bold;
-    transition: background-color 0.3s;
-}
-.stButton > button.primary:hover {
-    background-color: #C2182B !important;
-}
-
-.stButton > button.secondary {
-    background-color: #F76C6D !important;
-    color: #FFFFFF !important;
-    border-radius: 5px;
-    padding: 0.6em 1.2em;
-    font-weight: bold;
-    transition: background-color 0.3s;
-}
-.stButton > button.secondary:hover {
-    background-color: #E31837 !important;
-}
-
-.stButton > button.neutral {
-    background-color: #4B4B4B !important;
-    color: #FFFFFF !important;
-    border-radius: 5px;
-    padding: 0.6em 1.2em;
-    font-weight: bold;
-    transition: background-color 0.3s;
-}
-.stButton > button.neutral:hover {
-    background-color: #333333 !important;
-}
-
-/* Logout button */
-div.custom-logout > div > button,
-div[data-testid="stSidebar"] div.custom-logout > div > button {
-    background-color: #E31837 !important;
-    color: #FFFFFF !important;
-    font-weight: bold !important;
-    border: #E31837 !important;
-    border-radius: 6px !important;
-    width: 100% !important;
-    padding: 0.7em 1.2em !important;
+.stButton > button.primary { background-color: #E31837 !important; color: #FFFFFF !important; border-radius: 5px;
+    padding: 0.6em 1.2em; font-weight: bold; transition: background-color 0.3s; }
+.stButton > button.primary:hover { background-color: #C2182B !important; }
+.stButton > button.secondary { background-color: #F76C6D !important; color: #FFFFFF !important; border-radius: 5px;
+    padding: 0.6em 1.2em; font-weight: bold; transition: background-color 0.3s; }
+.stButton > button.secondary:hover { background-color: #E31837 !important; }
+.stButton > button.neutral { background-color: #4B4B4B !important; color: #FFFFFF !important; border-radius: 5px;
+    padding: 0.6em 1.2em; font-weight: bold; transition: background-color 0.3s; }
+.stButton > button.neutral:hover { background-color: #333333 !important; }
+div.custom-logout > div > button, div[data-testid="stSidebar"] div.custom-logout > div > button {
+    background-color: #0D47A1 !important; color: #E31837!important; font-weight: bold !important;
+    border: #E31837 !important; border-radius: 6px !important; width: 100% !important; padding: 0.7em 1.2em !important;
     transition: background-color 0.3s ease-in-out;
 }
-div.custom-logout > div > button:hover,
-div[data-testid="stSidebar"] div.custom-logout > div > button:hover {
-    background-color: #C2182B !important;
-    color: #FFFFFF !important;
+div.custom-logout > div > button:hover, div[data-testid="stSidebar"] div.custom-logout > div > button:hover {
+    background-color: #C2182B !important; color: #E31837 !important;
 }
-
-/* Metrics / Cards */
-div[data-testid="metric-container"] {
-    background-color: #FFFFFF !important;
-    border: 1px solid #E31837;
-    border-radius: 10px;
-    padding: 12px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    color: #212121 !important;
-}
-
-/* Inputs / Select boxes */
+div[data-testid="metric-container"] { background-color: #FFFFFF !important; border: 1px solid #E31837;
+    border-radius: 10px; padding: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); color: #212121 !important; }
 .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div {
-    background-color: #FFFFFF !important;
-    border: 1px solid #E31837 !important;
-    color: #212121 !important;
-    border-radius: 5px;
+    background-color: #FFFFFF !important; border: 1px solid #E31837 !important; color: #212121 !important; border-radius: 5px;
 }
-.stTextInput input:focus, .stTextArea textarea:focus {
-    outline: 2px solid #E31837 !important;
-    border-color: #E31837 !important;
-}
-
-/* Hide Streamlit menu / footer */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-
-/* ==== DARK AMBER CUSTOM HEADERS ==== */
-.rate-video, .rate-video * {
-    color: #FFB300 !important;
-    font-size: 22px !important;
-}
-.comments-header, .comments-header * {
-    color: #FFB300 !important;
-    font-size: 20px !important;
-}
-.analytics-top-rated, .analytics-top-rated * {
-    color: #FFB300 !important;
-    font-size: 24px !important;
-    border-bottom: 2px solid #FFB300 !important;
-    padding-bottom: 6px !important;
-}
-.analytics-overview, .analytics-overview * {
-    color: #FFB300 !important;
-    font-size: 24px !important;
-    border-bottom: 2px solid #FFB300 !important;
-    padding-bottom: 6px !important;
-}
-
-/* ==== HOME PAGE VIDEO HEADER (Red-Blue Gradient) ==== */
-.video-header, .video-header * {
-    background: linear-gradient(90deg, #E31837, #0a47a3);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-weight: bold !important;
-    font-size: 26px !important;
-    text-transform: uppercase;
-}
-            
-/* ===== Center CGI GRAM Title on Watch Page ===== */
-.center-title h1 {
-    text-align: center !important;
-    width: 100% !important;
-    display: block !important;
-}
-
-/* ===== Force Center CGI GRAM Title ===== */
-h1.center-title {
-    text-align: center !important;
-    width: 100% !important;
-    display: flex !important;
-    justify-content: center !important;
-    align-items: center !important;
-    margin: 0 auto !important;
-}
-
+.stTextInput input:focus, .stTextArea textarea:focus { outline: 2px solid #E31837 !important; border-color: #E31837 !important; }
+#MainMenu {visibility: hidden;} footer {visibility: hidden;}
+.rate-video, .rate-video * { color: #FFB300 !important; font-size: 22px !important; }
+.comments-header, .comments-header * { color: #FFB300 !important; font-size: 20px !important; }
+.analytics-top-rated, .analytics-top-rated * { color: #FFB300 !important; font-size: 24px !important; border-bottom: 2px solid #FFB300 !important; padding-bottom: 6px !important; }
+.analytics-overview, .analytics-overview * { color: #FFB300 !important; font-size: 24px !important; border-bottom: 2px solid #FFB300 !important; padding-bottom: 6px !important; }
+.video-header, .video-header * { background: linear-gradient(90deg, #E31837, #0a47a3); -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    font-weight: bold !important; font-size: 26px !important; text-transform: uppercase; }
+.center-title h1 { text-align: center !important; width: 100% !important; display: block !important; }
+h1.center-title { text-align: center !important; width: 100% !important; display: flex !important; justify-content: center !important; align-items: center !important; margin: 0 auto !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- HOME PAGE ---
 if page == "Home":
-    st.markdown('<h1 class="video-header">CGI GRAM – All Videos</h1>', unsafe_allow_html=True)
+   # st.markdown('<h1 class="video-header">CGI GRAM – All Videos</h1>', unsafe_allow_html=True)
+    st.markdown("<h1 style='font-size:38px; font-weight:700; color:#8B0000;'>CGI GRAM – All Videos</h1>", unsafe_allow_html=True)
 
     search_col, sort_col = st.columns([4, 1])
     search_query = search_col.text_input("🔍 Search videos by title", key="home_search")
@@ -556,8 +453,6 @@ if page == "Home":
     # Sort
     if sort_option == "Most Views":
         filtered_videos.sort(key=lambda v: v.get("views", 0), reverse=True)
-    #elif sort_option == "Top Rated":
-     #   filtered_videos.sort(key=lambda v: v.get("RATING", 0), reverse=True)
     elif sort_option == "Most Likes":
         filtered_videos.sort(key=lambda v: len(v.get("liked_by", [])), reverse=True)
     elif sort_option == "Most Dislikes":
@@ -581,12 +476,54 @@ if page == "Home":
                 st.caption(f"Uploaded by: {v.get('uploaded_by', 'Unknown')}")
                 st.write(f"{v['views']} Views | 👍 {likes} | 👎 {dislikes} | ❤️ {hearts}")
 
+                # --- Watch and Delete buttons side by side ---
+                btn_cols = st.columns([1, 1])  # Two equal-width columns for buttons
+
                 # Watch button
-                original_idx = st.session_state.videos.index(v)
-                if st.button("Watch", key=f"watch_{original_idx}"):
-                    st.session_state.current = original_idx
+                if btn_cols[0].button("Watch", key=f"watch_{v['uuid']}"):
+                    st.session_state.current = idx
                     st.session_state.page = "Watch"
                     st.rerun()
+
+                # Delete button (only for uploader)
+                if v.get("uploaded_by") == st.session_state.username:
+                    if btn_cols[1].button("Delete", key=f"delete_{v['uuid']}"):
+                        try:
+                            video_id = v["uuid"]
+                            conn = get_connection()
+                            cur = conn.cursor()
+
+            # Log deleted video first
+                            cur.execute("""
+                                INSERT INTO public."MAVS_DELETED_VIDEO" 
+                                ("VIDEO_ID", "VIDEO_NAME", "UPLOADED_BY", "DELETED_BY", "DELETED_DATE", "DELETED_TIME", "VIDEO_DESC")
+                                VALUES (%s, %s, %s, %s, CURRENT_DATE, CURRENT_TIME, %s)
+                            """, (
+                            video_id,
+                            v["title"],
+                            v["uploaded_by"],
+                            st.session_state.username,
+                            v["desc"]
+                         ))
+
+                        # Delete from related tables
+                            cur.execute('DELETE FROM public."MAVS_COMMENTS" WHERE "VIDEO_ID" = %s', (video_id,))
+                            cur.execute('DELETE FROM public."MAVS_VIDEO_REACTIONS" WHERE "VIDEO_ID" = %s', (video_id,))
+                            cur.execute('DELETE FROM public."MAVS_VIDEO_RATINGS" WHERE "VIDEO_ID" = %s', (video_id,))
+                            cur.execute('DELETE FROM public."MAVS_VIDEO_VIEWS" WHERE "VIDEO_ID" = %s', (video_id,))
+                            cur.execute('DELETE FROM public."MAVS_VIDEOS" WHERE "VIDEO_ID" = %s', (video_id,))
+
+                            conn.commit()
+                            cur.close()
+                            conn.close()
+
+                        # Remove from session state
+                            st.session_state.videos = [vid for vid in st.session_state.videos if vid["uuid"] != video_id]
+                            st.success(f"Video '{v['title']}' deleted successfully and logged!")
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Error deleting video: {e}")
 
 # --- UPLOAD PAGE ---
 elif page == "Upload":
@@ -631,12 +568,12 @@ elif page == "Upload":
 
                 # Insert into database
                 cur.execute("""
-                    INSERT INTO public."MAVS_VIDEOS" (
-                        "SYS_ID", "VIDEO_ID", "VIDEO_NAME", "VIEWS", "LIKES", "DISLIKES", "HEARTS",
-                        "VIDEO_DATA", "THUMB_DATA","VIDEO_DESC",
-                        "CREATED_DATE", "MODIFIED_DATE", "CREATED_TIME", "MODIFIED_TIME"
+    INSERT INTO public."MAVS_VIDEOS" (
+        "SYS_ID", "VIDEO_ID", "VIDEO_NAME", "VIEWS", "LIKES", "DISLIKES", "HEARTS",
+        "VIDEO_DATA", "THUMB_DATA", "VIDEO_DESC", "Uploaded_By",
+        "CREATED_DATE", "MODIFIED_DATE", "CREATED_TIME", "MODIFIED_TIME"
     )
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s,%s, CURRENT_DATE, CURRENT_DATE, CURRENT_TIME, CURRENT_TIME)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_DATE, CURRENT_DATE, CURRENT_TIME, CURRENT_TIME)
 """, (
     sys_id,
     video_uuid,
@@ -644,7 +581,8 @@ elif page == "Upload":
     0, 0, 0, 0,
     psycopg2.Binary(video_data),
     psycopg2.Binary(thumb_data) if thumb_data else None,
-    desc
+    desc,
+    st.session_state.username  # <-- save logged-in user as uploader
 ))
 
                 conn.commit()
@@ -872,9 +810,12 @@ elif page == "Watch":
     except Exception as e:
         st.error(f"Failed to load average rating: {e}")
 
+    import time
+
     # --- COMMENTS ---
     st.subheader("Add a Comment")
     comment = st.text_input("Write your comment here...")
+
     if st.button("Post Comment"):
         if comment.strip():
             video["comments"].append({
@@ -883,15 +824,46 @@ elif page == "Watch":
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
             save_comment_to_db(video_uuid, st.session_state.username, comment)
-            st.success("Comment posted!")
-            st.rerun()
+
+            # ✅ Sentiment check
+            positive_keywords = ["good", "great", "awesome", "nice", "love", "excellent", "amazing", "fantastic", "superb", "wow"]
+            negative_keywords = ["bad", "poor", "worst", "terrible", "hate", "awful"]
+
+            comment_lower = comment.lower()
+            if any(word in comment_lower for word in positive_keywords):
+                st.session_state["comment_popup"] = ("success", "💬 Thanks for your positive feedback! 🎉")
+            elif any(word in comment_lower for word in negative_keywords):
+                st.session_state["comment_popup"] = ("warning", "😟 Sorry to hear that. We'll keep working to improve!")
+            else:
+                st.session_state["comment_popup"] = ("info", "✅ Comment posted!")
+
         else:
             st.warning("Please enter a comment before posting.")
 
+    # --- Show popup with auto-clear ---
+    if "comment_popup" in st.session_state:
+        popup_type, popup_text = st.session_state["comment_popup"]
+        popup_placeholder = st.empty()  # placeholder for popup
+
+        # Display the popup
+        if popup_type == "success":
+            popup_placeholder.success(popup_text)
+        elif popup_type == "warning":
+            popup_placeholder.warning(popup_text)
+        elif popup_type == "info":
+            popup_placeholder.info(popup_text)
+
+        # Auto-clear after 5 seconds
+        time.sleep(3)
+        popup_placeholder.empty()
+        st.session_state.pop("comment_popup", None)
+
+    # --- Display comments ---
     st.markdown('<p class="comments-header">💬 Comments</p>', unsafe_allow_html=True)
     for c in video["comments"]:
         st.markdown(f"**{c['user']}** at *{c['time']}*")
         st.write(f"> {c['text']}")
+
 
 # --- ANALYTICS PAGE ---  
 elif page == "Analytics":
@@ -925,37 +897,171 @@ elif page == "Analytics":
         except:
             return 0, 0
 
-    st.markdown('<p class="analytics-top-rated">🏆 Top Rated Videos</p>', unsafe_allow_html=True)
+    with st.expander("🏆 Top Rated Videos", expanded=True): 
+        rated_videos = []
+        for v in vids:
+            count, avg = fetch_avg_rating_for_video(v["uuid"])
+            if count > 0:
+                rated_videos.append((v, avg))
 
-    st.markdown("---")
-    rated_videos = []
-    for v in vids:
-        count, avg = fetch_avg_rating_for_video(v["uuid"])
-        if count > 0:
-            rated_videos.append((v, avg))
+        if rated_videos:
+            max_rating = max(rated_videos, key=lambda x: x[1])[1]
+            top_rated_videos = [v for v in rated_videos if v[1] == max_rating]
+
+            for top_video, top_avg_rating in top_rated_videos:
+            
+                col1, col2 = st.columns([1, 4])
+                if top_video.get("thumb"):
+                    col1.image(top_video["thumb"], width=120)
+                else:
+                    col1.image("https://via.placeholder.com/120x80.png?text=No+Thumbnail", width=120)
+
+                with col2:
+                    st.subheader(top_video['title'])
+                    st.caption(f"Uploaded by: {top_video.get('uploaded_by', 'Unknown')}")
+                    st.write(f"Views: {top_video.get('views', 0)}")
+                    st.write(
+                        f"👍 Likes: {len(top_video.get('liked_by', []))} | "
+                        f"👎 Dislikes: {len(top_video.get('disliked_by', []))} | "
+                        f"❤️ Hearts: {len(top_video.get('hearted_by', []))}"
+                    )
+                    st.write(f"⭐ Average Rating: {top_avg_rating}")
+                st.markdown("---")
+
+    # --- Separate Expanders for Most Viewed, Liked, Disliked, Hearted ---
+    # Utility: Get top videos but only if metric > 0
+    def get_top_videos(videos, metric_fn):
+        scored = [(v, metric_fn(v)) for v in videos]
+        scored = [s for s in scored if s[1] > 0]  # ✅ keep only > 0
+        if not scored:
+            return []
+        max_val = max(scored, key=lambda x: x[1])[1]
+        return [v for v, val in scored if val == max_val]
+
+
+    # Most Viewed
+    with st.expander("📈 Most Viewed Videos", expanded=False):
+        top_viewed = get_top_videos(vids, lambda v: v.get("views", 0))
+        if top_viewed:
+            for v in top_viewed:
+                col1, col2 = st.columns([1, 4])
+                if v.get("thumb"):
+                    col1.image(v["thumb"], width=120)
+                else:
+                    col1.image("https://via.placeholder.com/120x80.png?text=No+Thumbnail", width=120)
+                with col2:
+                    st.subheader(v['title'])
+                    st.caption(f"Uploaded by: {v.get('uploaded_by', 'Unknown')}")
+                    st.write(f"Views: {v.get('views', 0)}")
+                    st.write(
+                        f"👍 Likes: {len(v.get('liked_by', []))} | "
+                        f"👎 Dislikes: {len(v.get('disliked_by', []))} | "
+                        f"❤️ Hearts: {len(v.get('hearted_by', []))}"
+                    )
+                    count, avg = fetch_avg_rating_for_video(v["uuid"])
+                    st.write(f"⭐ Average Rating: {avg} / 5 ({count} rating{'s' if count > 1 else ''})")
+                st.markdown("---")
+        else:
+            st.info("No videos found.")
+
+
+    # Most Liked
+    with st.expander("👍 Most Liked Videos", expanded=False):
+        top_liked = get_top_videos(vids, lambda v: len(v.get('liked_by', [])))
+        if top_liked:
+            for v in top_liked:
+                col1, col2 = st.columns([1, 4])
+                if v.get("thumb"):
+                    col1.image(v["thumb"], width=120)
+                else:
+                    col1.image("https://via.placeholder.com/120x80.png?text=No+Thumbnail", width=120)
+                with col2:
+                    st.subheader(v['title'])
+                    st.caption(f"Uploaded by: {v.get('uploaded_by', 'Unknown')}")
+                    st.write(f"👍 Likes: {len(v.get('liked_by', []))}")
+                    count, avg = fetch_avg_rating_for_video(v["uuid"])
+                    st.write(f"⭐ Average Rating: {avg} / 5 ({count} rating{'s' if count > 1 else ''})")
+                st.markdown("---")
+        else:
+            st.info("No liked videos found.")
+
+    # Most Disliked
+    with st.expander("👎 Most Disliked Videos", expanded=False):
+        top_disliked = get_top_videos(vids, lambda v: len(v.get('disliked_by', [])))
+        if top_disliked:
+            for v in top_disliked:
+                col1, col2 = st.columns([1, 4])
+                if v.get("thumb"):
+                    col1.image(v["thumb"], width=120)
+                else:
+                    col1.image("https://via.placeholder.com/120x80.png?text=No+Thumbnail", width=120)
+                with col2:
+                    st.subheader(v['title'])
+                    st.caption(f"Uploaded by: {v.get('uploaded_by', 'Unknown')}")
+                    st.write(f"👎 Dislikes: {len(v.get('disliked_by', []))}")
+                    count, avg = fetch_avg_rating_for_video(v["uuid"])
+                    st.write(f"⭐ Average Rating: {avg} / 5 ({count} rating{'s' if count > 1 else ''})")
+                st.markdown("---")
+        else:
+            st.info("No disliked videos found.")
+
+
+    # Most Hearted
+    with st.expander("❤️ Most Hearted Videos", expanded=False):
+        top_hearted = get_top_videos(vids, lambda v: len(v.get('hearted_by', [])))
+        if top_hearted:
+            for v in top_hearted:
+                col1, col2 = st.columns([1, 4])
+                if v.get("thumb"):
+                    col1.image(v["thumb"], width=120)
+                else:
+                    col1.image("https://via.placeholder.com/120x80.png?text=No+Thumbnail", width=120)
+                with col2:
+                    st.subheader(v['title'])
+                    st.caption(f"Uploaded by: {v.get('uploaded_by', 'Unknown')}")
+                    st.write(f"❤️ Hearts: {len(v.get('hearted_by', []))}")
+                    count, avg = fetch_avg_rating_for_video(v["uuid"])
+                    st.write(f"⭐ Average Rating: {avg} / 5 ({count} rating{'s' if count > 1 else ''})")
+                st.markdown("---")
+        else:
+            st.info("No hearted videos found.")
+
+    # --- Graphical View ---
+    st.subheader("Compare Average Ratings of Selected Videos")
 
     if rated_videos:
-        max_rating = max(rated_videos, key=lambda x: x[1])[1]
-        top_rated_videos = [v for v in rated_videos if v[1] == max_rating]
+        # Create a list of video titles for selection
+        video_titles = [v[0]['title'] for v in rated_videos]
 
-        for top_video, top_avg_rating in top_rated_videos:
-            col1, col2 = st.columns([1, 4])
-            if top_video.get("thumb"):
-                col1.image(top_video["thumb"], width=120)
-            else:
-                col1.image("https://via.placeholder.com/120x80.png?text=No+Thumbnail", width=120)
+        # Multiselect widget for user to pick videos
+        selected_titles = st.multiselect(
+            "Select videos to compare:",
+            options=video_titles,
+            default=video_titles[:5]  # show first 5 by default
+        )
 
-            with col2:
-                st.subheader(top_video['title'])
-                st.caption(f"Uploaded by: {top_video.get('uploaded_by', 'Unknown')}")
-                st.write(f"Views: {top_video.get('views', 0)}")
-                st.write(
-                    f"👍 Likes: {len(top_video.get('liked_by', []))} | "
-                    f"👎 Dislikes: {len(top_video.get('disliked_by', []))} | "
-                    f"❤️ Hearts: {len(top_video.get('hearted_by', []))}"
-                )
-                st.write(f"⭐ Average Rating: {top_avg_rating}")
-            st.markdown("---")
+        if selected_titles:
+            # Filter rated_videos based on selection
+            selected_videos = [v for v in rated_videos if v[0]['title'] in selected_titles]
+
+            chart_data = {
+                "Title": [v[0]['title'] for v in selected_videos],
+                "Average Rating": [v[1] for v in selected_videos]
+            }
+
+            fig = px.bar(
+                chart_data,
+                x="Title",
+                y="Average Rating",
+                text="Average Rating",
+                labels={"Title": "Video Title", "Average Rating": "⭐ Avg Rating"},
+                height=400
+            )
+            fig.update_traces(textposition='outside', marker_color='DarkGrey')
+            fig.update_layout(xaxis_tickangle=0)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Please select at least one video to display the chart.")
     else:
         st.info("No rated videos found.")
 
@@ -978,3 +1084,97 @@ elif page == "Analytics":
                 f"❤️ Hearts: {len(v.get('hearted_by', []))}"
             )
             st.markdown(f"⭐ Average Rating: {avg} / 5 ({count} rating{'s' if count > 1 else ''})")
+# HISTORY PAGE
+elif page == "Activity":
+    st.title("Your Activity")
+    username = st.session_state.username
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # 1️⃣ Uploaded videos (include date + time)
+        cur.execute("""
+            SELECT "VIDEO_NAME", "CREATED_DATE", "CREATED_TIME"
+            FROM public."MAVS_VIDEOS"
+            WHERE "Uploaded_By" = %s
+        """, (username,))
+        uploaded = cur.fetchall()  # (VIDEO_NAME, CREATED_DATE, CREATED_TIME)
+
+        # 2️⃣ Watched videos
+        cur.execute("""
+            SELECT v."VIDEO_NAME", v."Uploaded_By", vv."VIDEO_ID", vv."VIDEO_ID"
+            FROM public."MAVS_VIDEO_VIEWS" vv
+            JOIN public."MAVS_VIDEOS" v ON vv."VIDEO_ID" = v."VIDEO_ID"
+            WHERE vv."USER_NAME" = %s
+        """, (username,))
+        watched = cur.fetchall()  # (VIDEO_NAME, Uploaded_By, VIDEO_ID, VIDEO_ID)
+
+        # 3️⃣ Reactions
+        cur.execute("""
+            SELECT v."VIDEO_NAME", vr."REACTION_TYPE", v."Uploaded_By"
+            FROM public."MAVS_VIDEO_REACTIONS" vr
+            JOIN public."MAVS_VIDEOS" v ON vr."VIDEO_ID" = v."VIDEO_ID"
+            WHERE vr."USER_NAME" = %s
+        """, (username,))
+        reactions = cur.fetchall()  # (VIDEO_NAME, REACTION_TYPE, Uploaded_By)
+
+        # 4️⃣ Comments
+        cur.execute("""
+            SELECT v."VIDEO_NAME", mc."COMMENT_TEXT", v."Uploaded_By", mc."CREATED_DATE", mc."CREATED_TIME"
+            FROM public."MAVS_COMMENTS" mc
+            JOIN public."MAVS_VIDEOS" v ON mc."VIDEO_ID" = v."VIDEO_ID"
+            WHERE mc."USER_NAME" = %s
+        """, (username,))
+        comments = cur.fetchall()  # (VIDEO_NAME, COMMENT_TEXT, Uploaded_By, CREATED_DATE, CREATED_TIME)
+
+        # 5️⃣ Deleted videos
+        cur.execute("""
+            SELECT "VIDEO_NAME", "UPLOADED_BY", "DELETED_BY", "DELETED_DATE", "DELETED_TIME"
+            FROM public."MAVS_DELETED_VIDEO"
+            WHERE "DELETED_BY" = %s OR "UPLOADED_BY" = %s
+        """, (username, username))
+        deleted = cur.fetchall()  # (VIDEO_NAME, UPLOADED_BY, DELETED_BY, DELETED_DATE, DELETED_TIME)
+
+        cur.close()
+        conn.close()
+       
+        # Combine all activities
+        activity_feed = []
+
+        for video_name, created_date, created_time in uploaded:
+            timestamp = f"{created_date} {created_time}"
+            activity_feed.append((f"Uploaded **{video_name}**",timestamp))
+
+        for video_name, uploaded_by, _ , _ in watched:
+            activity_feed.append((None, f"watched **{video_name}** (Uploaded by: {uploaded_by})"))
+
+        for video_name, reaction_type, uploaded_by in reactions:
+            reaction_map = {'L': 'liked', 'D': 'disliked', 'H': 'hearted'}
+            action = reaction_map.get(reaction_type, 'reacted')
+            activity_feed.append((None, f"{action} **{video_name}** (Uploaded by: {uploaded_by})"))
+
+        for video_name, comment_text, uploaded_by, created_date, created_time in comments:
+            timestamp = f"{created_date} {created_time}"
+            activity_feed.append((f"Commented on **{video_name}** (Uploaded by: {uploaded_by})",timestamp))
+
+        for video_name, uploaded_by, deleted_by, deleted_date, deleted_time in deleted:
+            timestamp = f"{deleted_date} {deleted_time}"
+            if deleted_by == username:
+                activity_feed.append((timestamp, f"deleted your own video **{video_name}**"))
+            else:
+                activity_feed.append((timestamp, f"your video **{video_name}** was deleted by **{deleted_by}**"))
+                
+        if activity_feed:
+            # Sort by timestamp (newest first)
+            activity_feed.sort(key=lambda x: x[0] or '', reverse=True)
+            for timestamp, action_text in activity_feed:
+                if timestamp:
+                    st.write(f"- {timestamp} | **{username}** {action_text}")
+                else:
+                    st.write(f"- **{username}** {action_text}")
+        else:
+            st.info("No activity yet.")
+
+    except Exception as e:
+        st.error(f"Error loading activity: {e}")
